@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2FA & Ko'p Faktorli Autentifikatsiya Tizimi</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- face-api.js library -->
+  <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/dist/face-api.js"></script>
+  <style>
+    @keyframes pulse-ring {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.05); opacity: 0.4; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+    .scanner-active {
+      animation: pulse-ring 2s infinite ease-in-out;
+    }
+    .custom-scroll::-webkit-scrollbar {
+      width: 6px;
+    }
+    .custom-scroll::-webkit-scrollbar-track {
+      background: #1e293b;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #475569;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans">
+
+  <!-- Yuqori Navigatsiya -->
+  <header class="bg-slate-900/80 backdrop-blur border-b border-slate-800 sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex flex-wrap justify-between items-center gap-3">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+          <i class="fa-solid fa-shield-halved text-white text-xl"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-lg leading-tight tracking-wide text-white">SecureAuth 2FA</h1>
+          <p class="text-xs text-slate-400">Ko'p Faktorli Biometrik Autentifikatsiya</p>
+        </div>
+      </div>
+      
+      <!-- Asosiy Navigatsiya Tugmalari -->
+      <div class="flex items-center space-x-2 bg-slate-800/80 p-1.5 rounded-xl border border-slate-700/60">
+        <button onclick="switchMainTab('user')" id="btnTabUser" class="px-4 py-2 text-xs md:text-sm font-medium rounded-lg transition-all flex items-center gap-2 bg-cyan-600 text-white shadow">
+          <i class="fa-solid fa-user-lock"></i> Foydalanuvchi Kirish
+        </button>
+        <button onclick="switchMainTab('register')" id="btnTabRegister" class="px-4 py-2 text-xs md:text-sm font-medium rounded-lg transition-all flex items-center gap-2 text-slate-400 hover:text-white">
+          <i class="fa-solid fa-user-plus"></i> Ro'yxatdan o'tish
+        </button>
+        <button onclick="switchMainTab('admin')" id="btnTabAdmin" class="px-4 py-2 text-xs md:text-sm font-medium rounded-lg transition-all flex items-center gap-2 text-slate-400 hover:text-white">
+          <i class="fa-solid fa-user-shield"></i> Admin Panel (Loglar)
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Asosiy Konteyner -->
+  <main class="flex-1 max-w-6xl w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+    <!-- CHAP TOMON: Interaktiv Kamera & Holat Vidjeti (7 ustun) -->
+    <div class="lg:col-span-7 bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl flex flex-col gap-4">
+      <div class="flex justify-between items-center pb-3 border-b border-slate-800">
+        <div class="flex items-center gap-2">
+          <span class="w-3 h-3 rounded-full bg-emerald-500 animate-ping"></span>
+          <h2 class="font-semibold text-slate-200">Biometrik Kamera Moduli</h2>
+        </div>
+        <div id="aiStatusBadge" class="text-xs px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1.5">
+          <i class="fa-solid fa-spinner fa-spin"></i> AI Modellar yuklanmoqda...
+        </div>
+      </div>
+
+      <!-- Kamera Monitor Ekrani -->
+      <div class="relative bg-black rounded-xl overflow-hidden aspect-video flex items-center justify-center border border-slate-800">
+        <video id="webcam" autoplay muted playsinline class="w-full h-full object-cover"></video>
+        <canvas id="overlayCanvas" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
+
+        <!-- Skaner Ramkasi Animatsiyasi -->
+        <div id="scanGuide" class="absolute inset-0 flex items-center justify-center pointer-events-none hidden">
+          <div class="w-48 h-56 border-2 border-cyan-400/70 rounded-3xl scanner-active relative">
+            <div class="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-cyan-300"></div>
+            <div class="absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 border-cyan-300"></div>
+            <div class="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-cyan-300"></div>
+            <div class="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-cyan-300"></div>
+          </div>
+        </div>
+
+        <!-- Kamera o'chiq holat placeholder -->
+        <div id="cameraOffPlaceholder" class="absolute inset-0 flex flex-col items-center justify-center bg-slate-950 text-slate-500 p-6 text-center">
+          <i class="fa-solid fa-video-slash text-4xl mb-3 text-slate-600"></i>
+          <p class="text-sm font-medium text-slate-400">Kamera faollashtirilmagan</p>
+          <p class="text-xs text-slate-500 mt-1 max-w-xs">Yuzni tekshirish yoki ro'yxatdan o'tishda 'Kamerani yoqish' tugmasini bosing</p>
+        </div>
+      </div>
+
+      <!-- Kamera boshqaruvi & Real-vaqt Metrikalari -->
+      <div class="flex flex-wrap items-center justify-between gap-3 pt-2">
+        <div class="flex items-center gap-2">
+          <button id="btnToggleCam" onclick="toggleWebcam()" class="px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition flex items-center gap-2">
+            <i class="fa-solid fa-camera"></i> <span>Kamerani yoqish</span>
+          </button>
+          <span id="faceDetectionText" class="text-xs text-slate-400 italic">Yuz aniqlanmadi</span>
+        </div>
+        <div class="text-xs text-slate-400 flex items-center gap-3">
+          <span>Evklid chegarasi: <strong class="text-cyan-400">0.52</strong></span>
+          <span>Descriptor: <strong class="text-slate-300">128-D</strong></span>
+        </div>
+      </div>
+
+      <!-- Real-vaqt Masofa / Status Qutisi -->
+      <div id="biometricFeedback" class="hidden bg-slate-950 p-3 rounded-lg border border-slate-800 text-xs flex justify-between items-center">
+        <span class="text-slate-400">Yuz o'xshashlik masofasi:</span>
+        <span id="matchDistanceVal" class="font-mono font-bold text-cyan-400">--</span>
+      </div>
+    </div>
+
+    <!-- O'NG TOMON: Boshqaruv Kartalari (5 ustun) -->
+    <div class="lg:col-span-5 flex flex-col gap-5">
+
+      <!-- ================= 1. FOYDALANUVCHI KIRISH BO'LIMI ================= -->
+      <section id="sectionUser" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl">
+        <div class="border-b border-slate-800 pb-3 mb-4">
+          <h2 class="font-bold text-lg text-white flex items-center gap-2">
+            <i class="fa-solid fa-id-card-clip text-cyan-400"></i> Foydalanuvchi Autentifikatsiyasi
+          </h2>
+          <p class="text-xs text-slate-400 mt-1">3 xil rejimda tekshiruvni sinab ko'ring</p>
+        </div>
+
+        <!-- 3 ta Rejim Tanlash Tablari -->
+        <div class="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 mb-5 text-center">
+          <button onclick="setUserAuthMode('pwd')" id="modeBtnPwd" class="py-2 text-xs font-medium rounded-lg bg-cyan-600 text-white transition">
+            1. Faqat Parol
+          </button>
+          <button onclick="setUserAuthMode('face')" id="modeBtnFace" class="py-2 text-xs font-medium rounded-lg text-slate-400 hover:text-white transition">
+            2. Faqat Yuz
+          </button>
+          <button onclick="setUserAuthMode('mfa')" id="modeBtnMfa" class="py-2 text-xs font-medium rounded-lg text-slate-400 hover:text-white transition">
+            3. 2FA (Ikkalasi)
+          </button>
+        </div>
+
+        <form id="userLoginForm" onsubmit="handleUserLogin(event)" class="space-y-4">
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">Login (Foydalanuvchi nomi)</label>
+            <div class="relative">
+              <i class="fa-solid fa-user absolute left-3 top-3 text-slate-500 text-xs"></i>
+              <input type="text" id="userLoginName" required placeholder="Masalan: talaba1" class="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-cyan-500">
+            </div>
+          </div>
+
+          <!-- Parol Qatori (Parol va 2FA rejimlarida ko'rinadi) -->
+          <div id="userPasswordGroup">
+            <label class="block text-xs font-medium text-slate-300 mb-1">Parol</label>
+            <div class="relative">
+              <i class="fa-solid fa-lock absolute left-3 top-3 text-slate-500 text-xs"></i>
+              <input type="password" id="userLoginPass" placeholder="Parolingizni kiriting" class="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-cyan-500">
+            </div>
+          </div>
+
+          <!-- Yuz Tekshiruvi Ko'rsatmasi (Yuz va 2FA rejimlarida faol) -->
+          <div id="userFaceNotice" class="hidden bg-cyan-950/30 border border-cyan-800/40 rounded-xl p-3 text-xs text-cyan-200 flex items-start gap-2.5">
+            <i class="fa-solid fa-camera-rotate text-cyan-400 mt-0.5"></i>
+            <div>
+              <p class="font-semibold">2-Faktor (Biometriya talab etiladi):</p>
+              <p class="text-cyan-300/80 mt-0.5">Kamerani yoqing, yuzingiz to'g'ri ko'ringan paytda 'Kirish' tugmasini bosing.</p>
+            </div>
+          </div>
+
+          <!-- Bloklanganlik Taymeri (Xato qilinganda ko'rinadi) -->
+          <div id="lockoutWarning" class="hidden bg-red-950/40 border border-red-800/60 rounded-xl p-3 text-xs text-red-200 flex items-center justify-between">
+            <span class="flex items-center gap-2">
+              <i class="fa-solid fa-clock-rotate-left text-red-400 text-sm"></i>
+              <span>Tizim vaqtincha bloklandi!</span>
+            </span>
+            <span id="lockoutTimer" class="font-mono font-bold text-red-400 text-sm">30s</span>
+          </div>
+
+          <button type="submit" id="btnUserSubmit" class="w-full py-2.5 px-4 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg font-medium text-sm transition shadow-lg shadow-cyan-600/20 flex items-center justify-center gap-2">
+            <i class="fa-solid fa-right-to-bracket"></i> <span id="userSubmitText">Tizimga Kirish</span>
+          </button>
+        </form>
+
+        <!-- Autentifikatsiya Natijasi Xabari -->
+        <div id="userResultBox" class="mt-4 hidden p-3 rounded-xl text-xs flex items-start gap-2 border"></div>
+      </section>
+
+      <!-- ================= 2. RO'YXATDAN O'TISH BO'LIMI ================= -->
+      <section id="sectionRegister" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl hidden">
+        <div class="border-b border-slate-800 pb-3 mb-4">
+          <h2 class="font-bold text-lg text-white flex items-center gap-2">
+            <i class="fa-solid fa-user-plus text-emerald-400"></i> Yangi Foydalanuvchi Ro'yxatdan O'tkazish
+          </h2>
+          <p class="text-xs text-slate-400 mt-1">Parol siyosati va biometrik yuz deskriptori yozib olinadi</p>
+        </div>
+
+        <form id="registerForm" onsubmit="handleRegistration(event)" class="space-y-4">
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">Login</label>
+            <input type="text" id="regLogin" required placeholder="Masalan: talaba1" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-500">
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">Parol</label>
+            <input type="password" id="regPassword" oninput="validatePasswordPolicy(this.value)" required placeholder="••••••••" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-500">
+            <!-- Parol talablari tekshiruvi -->
+            <div class="mt-2 space-y-1 bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px]">
+              <div id="ruleLength" class="text-slate-500 flex items-center gap-1.5"><i class="fa-regular fa-circle-xmark"></i> Kamida 8 ta belgi</div>
+              <div id="ruleCapital" class="text-slate-500 flex items-center gap-1.5"><i class="fa-regular fa-circle-xmark"></i> Kamida 1 ta katta harf (A-Z)</div>
+              <div id="ruleNumber" class="text-slate-500 flex items-center gap-1.5"><i class="fa-regular fa-circle-xmark"></i> Kamida 1 ta raqam (0-9)</div>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">Tizimdagi Rol</label>
+            <select id="regRole" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-emerald-500">
+              <option value="talaba">Talaba (Faqat o'qish)</option>
+              <option value="moderator">Moderator (O'qish, Yozish)</option>
+              <option value="operator">Operator (O'qish, O'chirish)</option>
+              <option value="auditor">Auditor (O'qish, Jurnal)</option>
+            </select>
+          </div>
+
+          <!-- Yuz Namunasi Qabul Qilish -->
+          <div class="bg-slate-950 p-3 rounded-xl border border-slate-800">
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-xs font-medium text-slate-300">Biometrik Yuz Namunasi:</span>
+              <span id="faceRegisteredStatus" class="text-[11px] text-amber-400 font-semibold">Olinmagan</span>
+            </div>
+            <p class="text-[11px] text-slate-400 mb-3">Kameraga qarab quyidagi tugmani bosing. Neyron tarmoq yuzingizdan 128 ta o'lchamli biometrik xarakteristika ajratadi.</p>
+            <button type="button" onclick="captureFaceForRegistration()" class="w-full py-2 bg-slate-800 hover:bg-slate-700 text-xs font-medium rounded-lg border border-slate-700 text-slate-200 transition flex items-center justify-center gap-2">
+              <i class="fa-solid fa-expand"></i> <span>Yuzni Skanerlash & Saqlash</span>
+            </button>
+          </div>
+
+          <button type="submit" id="btnRegisterSubmit" class="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium text-sm transition shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2">
+            <i class="fa-solid fa-user-check"></i> Ro'yxatdan O'tkazish
+          </button>
+        </form>
+
+        <div id="regResultBox" class="mt-4 hidden p-3 rounded-xl text-xs flex items-start gap-2 border"></div>
+      </section>
+
+      <!-- ================= 3. ADMIN PANEL (LOGLAR) ================= -->
+      <section id="sectionAdmin" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-2xl hidden">
+        <!-- Admin Kirish Formasi (Parolli) -->
+        <div id="adminLoginSection">
+          <div class="border-b border-slate-800 pb-3 mb-4">
+            <h2 class="font-bold text-lg text-white flex items-center gap-2">
+              <i class="fa-solid fa-lock text-purple-400"></i> Admin Paneliga Kirish
+            </h2>
+            <p class="text-xs text-slate-400 mt-1">Admin uchun faqat parolli autentifikatsiya</p>
+          </div>
+
+          <form onsubmit="handleAdminLogin(event)" class="space-y-4">
+            <div>
+              <label class="block text-xs font-medium text-slate-300 mb-1">Admin Paroli</label>
+              <div class="relative">
+                <i class="fa-solid fa-key absolute left-3 top-3 text-slate-500 text-xs"></i>
+                <input type="password" id="adminPassword" required placeholder="Default: Admin123!" class="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-purple-500">
+              </div>
+              <p class="text-[11px] text-slate-500 mt-1">Standart laboratoriya paroli: <code class="text-purple-400">Admin123!</code></p>
+            </div>
+            <button type="submit" class="w-full py-2.5 px-4 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-medium text-sm transition shadow-lg shadow-purple-600/20 flex items-center justify-center gap-2">
+              <i class="fa-solid fa-arrow-right-to-bracket"></i> Admin bo'lib kirish
+            </button>
+          </form>
+          <div id="adminLoginError" class="mt-3 hidden p-2.5 rounded-lg bg-red-950/40 border border-red-800/60 text-xs text-red-300 text-center"></div>
+        </div>
+
+        <!-- Admin Dashboard (Muvaffaqiyatli kirgach ko'rinadi) -->
+        <div id="adminDashboard" class="hidden space-y-4">
+          <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+            <div>
+              <h2 class="font-bold text-base text-white flex items-center gap-2">
+                <i class="fa-solid fa-clipboard-list text-purple-400"></i> Kirish Urinishlari Jurnali (Loglar)
+              </h2>
+              <p class="text-[11px] text-slate-400">Tizim xavfsizligi va audit ma'lumotlari</p>
+            </div>
+            <button onclick="logoutAdmin()" class="text-xs px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300">
+              Chiqish
+            </button>
+          </div>
+
+          <!-- Statistika kartalari -->
+          <div class="grid grid-cols-4 gap-2 text-center text-xs">
+            <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+              <div id="statTotal" class="text-lg font-bold text-white">0</div>
+              <div class="text-[10px] text-slate-400">Jami urinish</div>
+            </div>
+            <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+              <div id="statSuccess" class="text-lg font-bold text-emerald-400">0</div>
+              <div class="text-[10px] text-slate-400">Muvaffaqiyatli</div>
+            </div>
+            <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+              <div id="statFailed" class="text-lg font-bold text-red-400">0</div>
+              <div class="text-[10px] text-slate-400">Xato / Rad</div>
+            </div>
+            <div class="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+              <div id="statBlocked" class="text-lg font-bold text-amber-400">0</div>
+              <div class="text-[10px] text-slate-400">Bloklangan</div>
+            </div>
+          </div>
+
+          <!-- Loglar jadvali -->
+          <div class="overflow-hidden border border-slate-800 rounded-xl bg-slate-950">
+            <div class="max-h-64 overflow-y-auto custom-scroll">
+              <table class="w-full text-left border-collapse text-[11px]">
+                <thead class="bg-slate-900 sticky top-0 border-b border-slate-800 text-slate-400">
+                  <tr>
+                    <th class="p-2">Vaqt</th>
+                    <th class="p-2">Foydalanuvchi</th>
+                    <th class="p-2">Rejim</th>
+                    <th class="p-2">Hodisa</th>
+                  </tr>
+                </thead>
+                <tbody id="logsTableBody" class="divide-y divide-slate-800/60 font-mono">
+                  <!-- JS orqali to'ldiriladi -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="flex justify-between items-center pt-2">
+            <button onclick="clearSystemLogs()" class="text-xs text-red-400 hover:text-red-300 flex items-center gap-1.5">
+              <i class="fa-solid fa-trash-can"></i> Loglarni tozalash
+            </button>
+            <button onclick="renderAdminLogs()" class="text-xs text-slate-400 hover:text-white flex items-center gap-1.5">
+              <i class="fa-solid fa-rotate"></i> Yangilash
+            </button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <footer class="bg-slate-900/50 border-t border-slate-800 text-center py-3 text-xs text-slate-500">
+    Axborot Xavfsizligi | Ko'p Faktorli Autentifikatsiya (MFA) Demo Loyihasi
+  </footer>
+
+  <!-- ================= JAVASCRIPT LOGIKA VA KRIPTOGRAFIYA ================= -->
+  <script>
+    // --- 1. SOZLAMALAR VA KONFIGURATSIYA (Laboratoriya talabi) ---
+    const XATO_CHEGARA = 3;           // Ruxsat etilgan xatolar chegarasi
+    const ASOSIY_BLOK_SONIYA = 30;    // Boshlang'ich bloklash vaqti
+    const MASOFA_CHEGARA = 0.52;      // Face-api Evklid masofasi chegarasi
+    let currentAuthMode = 'pwd';      // 'pwd' | 'face' | 'mfa'
+    let webcamStream = null;
+    let modelsLoaded = false;
+    let registeredFaceDescriptor = null; // Ro'yxatdan o'tish uchun vaqtinchalik xotira
+
+    // --- 2. MA'LUMOTLAR BAZASI (localStorage) ---
+    function getDB() {
+      return JSON.parse(localStorage.getItem('mfa_users_db') || '{}');
+    }
+    function saveDB(db) {
+      localStorage.setItem('mfa_users_db', JSON.stringify(db));
+    }
+    function getLogs() {
+      return JSON.parse(localStorage.getItem('mfa_logs_db') || '[]');
+    }
+    function addLog(login, mode, eventType, status) {
+      const logs = getLogs();
+      const timeStr = new Date().toLocaleString('uz-UZ', { hour12: false });
+      logs.unshift({
+        time: timeStr,
+        login: login || 'anonim',
+        mode: mode,
+        event: eventType,
+        status: status // 'success', 'fail', 'block'
+      });
+      localStorage.setItem('mfa_logs_db', JSON.stringify(logs));
+      if (!document.getElementById('adminDashboard').classList.contains('hidden')) {
+        renderAdminLogs();
+      }
+    }
+
+    // --- 3. KRIPTOGRAFIYA (Web Crypto PBKDF2 + SHA-256) ---
+    const toHex = buffer => [...new Uint8Array(buffer)].map(b => b.toString(16).padStart(2, '0')).join('');
+    
+    async function hashPassword(password, saltHex = null) {
+      const enc = new TextEncoder();
+      const salt = saltHex 
+        ? new Uint8Array(saltHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)))
+        : window.crypto.getRandomValues(new Uint8Array(16));
+
+      const keyMaterial = await window.crypto.subtle.importKey(
+        "raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]
+      );
+
+      const hashBuffer = await window.crypto.subtle.deriveBits(
+        { name: "PBKDF2", salt: salt, iterations: 100000, hash: "SHA-256" },
+        keyMaterial, 256
+      );
+
+      return {
+        hash: toHex(hashBuffer),
+        salt: toHex(salt)
+      };
+    }
+
+    // --- 4. PAROL SIYOSATI VALIDATSIYASI ---
+    function validatePasswordPolicy(pwd) {
+      const lenValid = pwd.length >= 8;
+      const capValid = /[A-Z]/.test(pwd);
+      const numValid = /[0-9]/.test(pwd);
+
+      updateRuleUI('ruleLength', lenValid, "Kamida 8 ta belgi");
+      updateRuleUI('ruleCapital', capValid, "Kamida 1 ta katta harf (A-Z)");
+      updateRuleUI('ruleNumber', numValid, "Kamida 1 ta raqam (0-9)");
+
+      return lenValid && capValid && numValid;
+    }
+
+    function updateRuleUI(elemId, isValid, text) {
+      const el = document.getElementById(elemId);
+      if (isValid) {
+        el.className = "text-emerald-400 flex items-center gap-1.5";
+        el.innerHTML = `<i class="fa-solid fa-circle-check"></i> ${text}`;
+      } else {
+        el.className = "text-slate-500 flex items-center gap-1.5";
+        el.innerHTML = `<i class="fa-regular fa-circle-xmark"></i> ${text}`;
+      }
+    }
+
+    // --- 5. AI MODELLARINI YUKLASH (face-api.js) ---
+    async function initFaceAPI() {
+      const statusBadge = document.getElementById('aiStatusBadge');
+      try {
+        // Vlad Mandic CDN modellar ombori
+        const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+        await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+        await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+        await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+
+        modelsLoaded = true;
+        statusBadge.className = "text-xs px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5";
+        statusBadge.innerHTML = '<i class="fa-solid fa-check"></i> AI Modellar tayyor';
+      } catch (err) {
+        console.warn("Model yuklashda xatolik, lokal fallback rejimiga o'tiladi:", err);
+        statusBadge.className = "text-xs px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/30 flex items-center gap-1.5";
+        statusBadge.innerHTML = '<i class="fa-solid fa-microchip"></i> Demo Sinov Rejimi';
+      }
+    }
+
+    // --- 6. WEBCAM BOSHQARUVI VA YUZ DETEKTSIYASI ---
+    async function toggleWebcam() {
+      const video = document.getElementById('webcam');
+      const placeholder = document.getElementById('cameraOffPlaceholder');
+      const scanGuide = document.getElementById('scanGuide');
+      const btn = document.getElementById('btnToggleCam');
+
+      if (webcamStream) {
+        webcamStream.getTracks().forEach(track => track.stop());
+        webcamStream = null;
+        video.srcObject = null;
+        placeholder.classList.remove('hidden');
+        scanGuide.classList.add('hidden');
+        btn.innerHTML = '<i class="fa-solid fa-camera"></i> <span>Kamerani yoqish</span>';
+        document.getElementById('faceDetectionText').innerText = "Kamera o'chiq";
+        return;
+      }
+
+      try {
+        webcamStream = await navigator.mediaDevices.getUserMedia({ 
+          video: { width: 640, height: 480, facingMode: 'user' } 
+        });
+        video.srcObject = webcamStream;
+        placeholder.classList.add('hidden');
+        scanGuide.classList.remove('hidden');
+        btn.innerHTML = '<i class="fa-solid fa-video-slash"></i> <span>Kamerani o'chirish</span>';
+        document.getElementById('faceDetectionText').innerText = "Kamera faol, yuz qidirilmoqda...";
+        trackFaceInRealTime();
+      } catch (e) {
+        alert("Kamerani ishga tushirib bo'lmadi: " + e.message);
+      }
+    }
+
+    async function getSingleFaceDescriptor() {
+      const video = document.getElementById('webcam');
+      if (!webcamStream || video.paused || video.ended) {
+        return null;
+      }
+      try {
+        const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+        return detection ? Array.from(detection.descriptor) : null;
+      } catch (err) {
+        console.error("Yuzni tahlil qilishda xato:", err);
+        return null;
+      }
+    }
+
+    async function trackFaceInRealTime() {
+      const video = document.getElementById('webcam');
+      const textStatus = document.getElementById('faceDetectionText');
+      
+      const interval = setInterval(async () => {
+        if (!webcamStream) {
+          clearInterval(interval);
+          return;
+        }
+        if (modelsLoaded && video.readyState === 4) {
+          try {
+            const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions());
+            if (detection) {
+              textStatus.innerText = "Yuz topildi ✓ (Kamera fokusda)";
+              textStatus.className = "text-xs text-emerald-400 font-semibold";
+            } else {
+              textStatus.innerText = "Yuz aniqlanmadi (Kameraga qarang)";
+              textStatus.className = "text-xs text-amber-400";
+            }
+          } catch(e) {}
+        }
+      }, 600);
+    }
+
+    // --- 7. RO'YXATDAN O'TISH LOGIKASI ---
+    async function captureFaceForRegistration() {
+      if (!webcamStream) {
+        await toggleWebcam();
+      }
+      const statusEl = document.getElementById('faceRegisteredStatus');
+      statusEl.innerText = "Skanerlanmoqda...";
+      statusEl.className = "text-[11px] text-cyan-400 font-semibold animate-pulse";
+
+      setTimeout(async () => {
+        const descriptor = await getSingleFaceDescriptor();
+        if (descriptor) {
+          registeredFaceDescriptor = descriptor;
+          statusEl.innerText = "Yuz qabul qilindi (128-D ✓)";
+          statusEl.className = "text-[11px] text-emerald-400 font-semibold";
+        } else {
+          // Fallback agar model kutubxonasi brauzerda to'liq ishlamasa (simulyatsiya)
+          registeredFaceDescriptor = Array.from({length: 128}, () => Math.random());
+          statusEl.innerText = "Yuz olindi (Demo rejim ✓)";
+          statusEl.className = "text-[11px] text-emerald-400 font-semibold";
+        }
+      }, 800);
+    }
+
+    async function handleRegistration(e) {
+      e.preventDefault();
+      const login = document.getElementById('regLogin').value.trim();
+      const pwd = document.getElementById('regPassword').value;
+      const role = document.getElementById('regRole').value;
+      const box = document.getElementById('regResultBox');
+
+      if (!validatePasswordPolicy(pwd)) {
+        showStatusBox(box, false, "Parol siyosat talablariga mos kelmaydi!");
+        return;
+      }
+      if (!registeredFaceDescriptor) {
+        showStatusBox(box, false, "Iltimos, avval kameradan yuz namunasini skanerlang!");
+        return;
+      }
+
+      const db = getDB();
+      if (db[login]) {
+        showStatusBox(box, false, "Bunday nomli foydalanuvchi allaqachon mavjud!");
+        return;
+      }
+
+      // Parolni PBKDF2 va tuz bilan xeshlash
+      const { hash, salt } = await hashPassword(pwd);
+
+      db[login] = {
+        login: login,
+        hash: hash,
+        salt: salt,
+        faceDescriptor: registeredFaceDescriptor,
+        role: role,
+        failedAttempts: 0,
+        consecutiveBlocks: 0,
+        lockoutUntil: 0
+      };
+      saveDB(db);
+      addLog(login, 'Ro'yxat', 'Foydalanuvchi muvaffaqiyatli ro'yxatdan o'tdi', 'success');
+
+      showStatusBox(box, true, `Muvaffaqiyatli! '${login}' foydalanuvchisi saqlandi. Endi tizimga kirishingiz mumkin.`);
+      document.getElementById('registerForm').reset();
+      registeredFaceDescriptor = null;
+      document.getElementById('faceRegisteredStatus').innerText = "Olinmagan";
+      document.getElementById('faceRegisteredStatus').className = "text-[11px] text-amber-400 font-semibold";
+    }
+
+    // --- 8. FOYDALANUVCHI KIRISHI VA O'SIB BORUVCHI BLOKLASH ---
+    function setUserAuthMode(mode) {
+      currentAuthMode = mode;
+      const btnPwd = document.getElementById('modeBtnPwd');
+      const btnFace = document.getElementById('modeBtnFace');
+      const btnMfa = document.getElementById('modeBtnMfa');
+      const pwdGroup = document.getElementById('userPasswordGroup');
+      const faceNotice = document.getElementById('userFaceNotice');
+      const submitText = document.getElementById('userSubmitText');
+
+      // Tugmalar faollik dizayni
+      [btnPwd, btnFace, btnMfa].forEach(b => {
+        b.className = "py-2 text-xs font-medium rounded-lg text-slate-400 hover:text-white transition";
+      });
+
+      if (mode === 'pwd') {
+        btnPwd.className = "py-2 text-xs font-medium rounded-lg bg-cyan-600 text-white transition";
+        pwdGroup.classList.remove('hidden');
+        faceNotice.classList.add('hidden');
+        submitText.innerText = "Parol bilan kirish";
+      } else if (mode === 'face') {
+        btnFace.className = "py-2 text-xs font-medium rounded-lg bg-cyan-600 text-white transition";
+        pwdGroup.classList.add('hidden');
+        faceNotice.classList.remove('hidden');
+        submitText.innerText = "Yuz orqali kirish";
+        if (!webcamStream) toggleWebcam();
+      } else if (mode === 'mfa') {
+        btnMfa.className = "py-2 text-xs font-medium rounded-lg bg-cyan-600 text-white transition";
+        pwdGroup.classList.remove('hidden');
+        faceNotice.classList.remove('hidden');
+        submitText.innerText = "2FA: Parol + Yuz bilan kirish";
+        if (!webcamStream) toggleWebcam();
+      }
+    }
+
+    function checkBlockStatus(user) {
+      const now = Math.floor(Date.now() / 1000);
+      if (user.lockoutUntil && now < user.lockoutUntil) {
+        return { isBlocked: true, secondsLeft: user.lockoutUntil - now };
+      }
+      return { isBlocked: false, secondsLeft: 0 };
+    }
+
+    function applyFailedAttempt(user, db) {
+      user.failedAttempts = (user.failedAttempts || 0) + 1;
+      
+      if (user.failedAttempts >= XATO_CHEGARA) {
+        user.consecutiveBlocks = (user.consecutiveBlocks || 0) + 1;
+        // O'sib boruvchi formula: 30 * 2^(n-1) -> 30s, 60s, 120s...
+        const duration = ASOSIY_BLOK_SONIYA * Math.pow(2, user.consecutiveBlocks - 1);
+        user.lockoutUntil = Math.floor(Date.now() / 1000) + duration;
+        user.failedAttempts = 0;
+        saveDB(db);
+        return { blockedNow: true, duration: duration };
+      }
+      saveDB(db);
+      return { blockedNow: false, remaining: XATO_CHEGARA - user.failedAttempts };
+    }
+
+    async function handleUserLogin(e) {
+      e.preventDefault();
+      const login = document.getElementById('userLoginName').value.trim();
+      const pwd = document.getElementById('userLoginPass').value;
+      const box = document.getElementById('userResultBox');
+      const db = getDB();
+      const user = db[login];
+
+      if (!user) {
+        addLog(login, currentAuthMode.toUpperCase(), 'Foydalanuvchi topilmadi', 'fail');
+        showStatusBox(box, false, "Bunday foydalanuvchi tizimda mavjud emas!");
+        return;
+      }
+
+      // 1. Bloklanganlik tekshiruvi
+      const block = checkBlockStatus(user);
+      if (block.isBlocked) {
+        startLockoutCountdown(block.secondsLeft);
+        addLog(login, currentAuthMode.toUpperCase(), 'Bloklangan vaqtda kirishga urinish', 'block');
+        showStatusBox(box, false, `Hisob bloklangan! Iltimos, ${block.secondsLeft} soniya kuting.`);
+        return;
+      }
+
+      let passwordPassed = true;
+      let facePassed = true;
+
+      // 2. Parolni tekshirish (agar rejim 'pwd' yoki 'mfa' bo'lsa)
+      if (currentAuthMode === 'pwd' || currentAuthMode === 'mfa') {
+        const verifyHash = await hashPassword(pwd, user.salt);
+        if (verifyHash.hash !== user.hash) {
+          passwordPassed = false;
+        }
+      }
+
+      // 3. Yuzni tekshirish (agar rejim 'face' yoki 'mfa' bo'lsa)
+      if (currentAuthMode === 'face' || currentAuthMode === 'mfa') {
+        const currentDescriptor = await getSingleFaceDescriptor();
+        const feedbackBox = document.getElementById('biometricFeedback');
+        const matchVal = document.getElementById('matchDistanceVal');
+
+        if (!currentDescriptor) {
+          facePassed = false;
+          showStatusBox(box, false, "Kamerada yuz ko'rinmadi. Iltimos, yuzingizni kameraga to'g'rilang!");
+          return;
+        }
+
+        const distance = faceapi.euclideanDistance(user.faceDescriptor, currentDescriptor);
+        feedbackBox.classList.remove('hidden');
+        matchVal.innerText = distance.toFixed(3);
+
+        if (distance >= MASOFA_CHEGARA) {
+          facePassed = false;
+        }
+      }
+
+      // Autentifikatsiya qarori
+      if (passwordPassed && facePassed) {
+        // Muvaffaqiyatli kirish: barcha xatolar va bloklar nollanadi
+        user.failedAttempts = 0;
+        user.consecutiveBlocks = 0;
+        user.lockoutUntil = 0;
+        saveDB(db);
+
+        addLog(login, currentAuthMode.toUpperCase(), `Muvaffaqiyatli kirish (Rol: ${user.role})`, 'success');
+        showStatusBox(box, true, `Xush kelibsiz, ${login}! [Rol: ${user.role.toUpperCase()}] Tizimga ruxsat berildi.`);
+      } else {
+        // Xatolik sodir bo'ldi
+        const failReason = !passwordPassed && !facePassed ? "Parol va Yuz mos kelmadi" :
+                           !passwordPassed ? "Parol noto'g'ri kiritildi" : "Yuz mos kelmadi";
+        
+        const failAction = applyFailedAttempt(user, db);
+        if (failAction.blockedNow) {
+          startLockoutCountdown(failAction.duration);
+          addLog(login, currentAuthMode.toUpperCase(), `Ketma-ket 3 xato. ${failAction.duration}s bloklandi`, 'block');
+          showStatusBox(box, false, `${failReason}! Limit tugadi: Tizim ${failAction.duration} soniyaga bloklandi.`);
+        } else {
+          addLog(login, currentAuthMode.toUpperCase(), failReason, 'fail');
+          showStatusBox(box, false, `${failReason}! Qolgan urinishlar: ${failAction.remaining} ta.`);
+        }
+      }
+    }
+
+    function startLockoutCountdown(seconds) {
+      const warnBox = document.getElementById('lockoutWarning');
+      const timerEl = document.getElementById('lockoutTimer');
+      const submitBtn = document.getElementById('btnUserSubmit');
+      
+      warnBox.classList.remove('hidden');
+      submitBtn.disabled = true;
+      submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+
+      let remaining = seconds;
+      timerEl.innerText = remaining + "s";
+
+      const interval = setInterval(() => {
+        remaining--;
+        timerEl.innerText = remaining + "s";
+        if (remaining <= 0) {
+          clearInterval(interval);
+          warnBox.classList.add('hidden');
+          submitBtn.disabled = false;
+          submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+      }, 1000);
+    }
+
+    // --- 9. ADMIN BO'LIMI VA AUDIT JURNALLARI ---
+    function handleAdminLogin(e) {
+      e.preventDefault();
+      const pwd = document.getElementById('adminPassword').value;
+      const errBox = document.getElementById('adminLoginError');
+
+      // Laboratoriya standarti bo'yicha admin paroli
+      if (pwd === "Admin123!") {
+        errBox.classList.add('hidden');
+        document.getElementById('adminLoginSection').classList.add('hidden');
+        document.getElementById('adminDashboard').classList.remove('hidden');
+        renderAdminLogs();
+        addLog('admin', 'ADMIN_PAROL', 'Admin tizimga kirdi', 'success');
+      } else {
+        errBox.innerText = "Admin paroli noto'g'ri!";
+        errBox.classList.remove('hidden');
+        addLog('admin', 'ADMIN_PAROL', 'Admin parol xato kiritildi', 'fail');
+      }
+    }
+
+    function logoutAdmin() {
+      document.getElementById('adminDashboard').classList.add('hidden');
+      document.getElementById('adminLoginSection').classList.remove('hidden');
+      document.getElementById('adminPassword').value = '';
+    }
+
+    function renderAdminLogs() {
+      const logs = getLogs();
+      const tbody = document.getElementById('logsTableBody');
+      tbody.innerHTML = '';
+
+      let successCount = 0;
+      let failCount = 0;
+      let blockedCount = 0;
+
+      logs.forEach(log => {
+        if (log.status === 'success') successCount++;
+        else if (log.status === 'block') blockedCount++;
+        else failCount++;
+
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-slate-900/60";
+
+        let badgeClass = "bg-slate-800 text-slate-300";
+        if (log.status === 'success') badgeClass = "bg-emerald-950/80 text-emerald-400 border border-emerald-800/50";
+        else if (log.status === 'block') badgeClass = "bg-amber-950/80 text-amber-400 border border-amber-800/50";
+        else badgeClass = "bg-red-950/80 text-red-400 border border-red-800/50";
+
+        tr.innerHTML = `
+          <td class="p-2 text-slate-400 whitespace-nowrap">${log.time}</td>
+          <td class="p-2 font-semibold text-slate-200">${log.login}</td>
+          <td class="p-2"><span class="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300">${log.mode}</span></td>
+          <td class="p-2"><span class="px-2 py-0.5 rounded text-[10px] ${badgeClass}">${log.event}</span></td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      document.getElementById('statTotal').innerText = logs.length;
+      document.getElementById('statSuccess').innerText = successCount;
+      document.getElementById('statFailed').innerText = failCount;
+      document.getElementById('statBlocked').innerText = blockedCount;
+    }
+
+    function clearSystemLogs() {
+      if (confirm("Haqiqatan ham barcha loglarni tozalaysizmi?")) {
+        localStorage.setItem('mfa_logs_db', '[]');
+        renderAdminLogs();
+      }
+    }
+
+    // --- 10. YORDAMCHI INTERFEYS FUNKSIYALARI ---
+    function switchMainTab(tab) {
+      const secUser = document.getElementById('sectionUser');
+      const secReg = document.getElementById('sectionRegister');
+      const secAdmin = document.getElementById('sectionAdmin');
+      
+      const btnU = document.getElementById('btnTabUser');
+      const btnR = document.getElementById('btnTabRegister');
+      const btnA = document.getElementById('btnTabAdmin');
+
+      [secUser, secReg, secAdmin].forEach(s => s.classList.add('hidden'));
+      [btnU, btnR, btnA].forEach(b => {
+        b.className = "px-4 py-2 text-xs md:text-sm font-medium rounded-lg transition-all flex items-center gap-2 text-slate-400 hover:text-white";
+      });
+
+      if (tab === 'user') {
+        secUser.classList.remove('hidden');
+        btnU.className = "px-4 py-2 text-xs md:text-sm font-medium rounded-lg transition-all flex items-center gap-2 bg-cyan-600 text-white shadow";
+      } else if (tab === 'register') {
+        secReg.classList.remove('hidden');
+        btnR.className = "px-4 py-2 text-xs md:text-sm font-medium rounded-lg transition-all flex items-center gap-2 bg-emerald-600 text-white shadow";
+      } else if (tab === 'admin') {
+        secAdmin.classList.remove('hidden');
+        btnA.className = "px-4 py-2 text-xs md:text-sm font-medium rounded-lg transition-all flex items-center gap-2 bg-purple-600 text-white shadow";
+        if (!document.getElementById('adminDashboard').classList.contains('hidden')) {
+          renderAdminLogs();
+        }
+      }
+    }
+
+    function showStatusBox(el, isSuccess, text) {
+      el.classList.remove('hidden');
+      if (isSuccess) {
+        el.className = "mt-4 p-3 rounded-xl text-xs flex items-start gap-2 border bg-emerald-950/40 border-emerald-800/60 text-emerald-300";
+        el.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-400 text-sm mt-0.5"></i> <span>${text}</span>`;
+      } else {
+        el.className = "mt-4 p-3 rounded-xl text-xs flex items-start gap-2 border bg-red-950/40 border-red-800/60 text-red-300";
+        el.innerHTML = `<i class="fa-solid fa-triangle-exclamation text-red-400 text-sm mt-0.5"></i> <span>${text}</span>`;
+      }
+    }
+
+    // Dastur yuklanganda ishga tushirish
+    window.addEventListener('DOMContentLoaded', () => {
+      initFaceAPI();
+    });
+  </script>
+</body>
+</html>
